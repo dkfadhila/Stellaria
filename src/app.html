@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#000010" />
+  <meta name="description" content="Stellaria - interactive star atlas and constellation mythology" />
+  <link rel="manifest" href="%sveltekit.assets%/manifest.json" />
+  %sveltekit.head%
+</head>
+<body data-sveltekit-preload-data="hover">
+  <script>
+    window.__errs = [];
+    window.addEventListener('error', function(e) {
+      window.__errs.push('ERROR: ' + (e.message||'?') + ' @ ' + (e.filename||'').split('/').pop() + ':' + e.lineno + ':' + e.colno + (e.error ? '\n' + e.error.stack : ''));
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      window.__errs.push('REJECT: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)) + (e.reason && e.reason.stack ? '\n' + e.reason.stack : ''));
+    });
+    var origLog = console.log;
+    console.log = function() { window.__errs.push('LOG: ' + Array.from(arguments).map(String).join(' ')); origLog.apply(console, arguments); };
+    var origErr = console.error;
+    console.error = function() { window.__errs.push('CONERR: ' + Array.from(arguments).map(String).join(' ')); origErr.apply(console, arguments); };
+  </script>
+  <div style="display: contents">%sveltekit.body%</div>
+</body>
+</html>

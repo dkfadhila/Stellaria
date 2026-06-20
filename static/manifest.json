@@ -1,0 +1,12 @@
+{
+  "name": "Stellaria",
+  "short_name": "Stellaria",
+  "description": "Interactive star atlas",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000010",
+  "theme_color": "#000010",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
