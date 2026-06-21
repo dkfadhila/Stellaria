@@ -98,7 +98,7 @@ Point size scales with apparent magnitude; stars below the user-set magnitude li
 - [x] Deep-sky objects (Messier, NGC) — 109 Messier objects with type-colored markers
 - [x] Milky Way band rendering (procedural, 40k GPU point sprites)
 - [x] Ecliptic and galactic plane overlays (great-circle LineLoops)
-- [ ] Exoplanet marker integration
+- [x] Exoplanet markers — 40 notable worlds with diamond glyphs, type coloring (rocky/terran/super-Earth/neptune/gas/water), and gold habitable-zone ring for HZ candidates
 - [ ] Mobile touch gestures (pinch-zoom already supported)
 
 ## License

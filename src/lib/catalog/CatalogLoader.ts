@@ -56,6 +56,14 @@ export async function loadMessierCatalog(): Promise<[number, number, number, num
   return res.json();
 }
 
+/** Load notable exoplanet catalog.
+ *  Format: [host, planetName, ra, dec, hostMag, type, periodDays, year, massEarth, radiusEarth, habitable] */
+export async function loadExoplanetCatalog(): Promise<[string, string, number, number, number, string, number, number, number, number, number][]> {
+  const res = await fetch('/catalog/exoplanets.json');
+  if (!res.ok) return [];
+  return res.json();
+}
+
 /** Convert RA (deg) and Dec (deg) to a 3D unit vector in J2000 equatorial frame. */
 export function radecToVector(raDeg: number, decDeg: number, radius = 1): [number, number, number] {
   const ra = raDeg * Math.PI / 180;

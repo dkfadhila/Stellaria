@@ -6,10 +6,12 @@
   import { MilkyWayRenderer } from '$lib/renderer/MilkyWayRenderer';
   import { PlaneOverlayRenderer } from '$lib/renderer/PlaneOverlayRenderer';
   import { DeepSkyRenderer, type DeepSkyObject } from '$lib/renderer/DeepSkyRenderer';
+  import { ExoplanetRenderer, type Exoplanet } from '$lib/renderer/ExoplanetRenderer';
   import { SkyControls } from '$lib/engine/SkyControls';
   import {
     loadStarCatalog, loadNamedStars, loadConstellationLines,
-    loadConstellationNames, loadMessierCatalog, radecToVector, SPHERE_RADIUS
+    loadConstellationNames, loadMessierCatalog, loadExoplanetCatalog,
+    radecToVector, SPHERE_RADIUS
   } from '$lib/catalog/CatalogLoader';
   import { rotationMatrix, lstDegrees, degToHms, degToDms, horizontalToAltAz } from '$lib/astronomy/coordinates';
   import { SPECTRAL_NAMES } from '$lib/catalog/types';
@@ -26,6 +28,7 @@
   let milkyWayRenderer: MilkyWayRenderer;
   let planeOverlay: PlaneOverlayRenderer;
   let deepSkyRenderer: DeepSkyRenderer | null = null;
+  let exoRenderer: ExoplanetRenderer | null = null;
   let raycaster = new THREE.Raycaster();
 
   let stars: Star[] = [];
@@ -48,6 +51,8 @@
   let showGalactic = false;
   let showDSO = true;
   let selectedDSO: DeepSkyObject | null = null;
+  let showExo = true;
+  let selectedExo: Exoplanet | null = null;
   let showNames = false;
   let magLimit = 6.0;
   let fovLabel = 75;
@@ -68,6 +73,7 @@
     if (milkyWayRenderer) milkyWayRenderer.setRotation(rotationMat);
     if (planeOverlay) planeOverlay.setRotation(rotationMat);
     if (deepSkyRenderer) deepSkyRenderer.setRotation(rotationMat);
+    if (exoRenderer) exoRenderer.setRotation(rotationMat);
     lastUpdateMs = dateMs;
     lstLabel = degToHms(lstDegrees(new Date(dateMs), lon));
   }
@@ -128,6 +134,23 @@
           selectedDSO = dso;
           selectedStar.set(null);
           selected = null;
+          selectedExo = null;
+          return;
+        }
+      }
+    }
+
+    // Exoplanet hosts — diamond markers, similar pick radius to DSO
+    if (exoRenderer && showExo) {
+      raycaster.params.Points!.threshold = 0.06;
+      const exoHits = raycaster.intersectObject(exoRenderer.points, false);
+      if (exoHits.length > 0) {
+        const exo = exoRenderer.objects[exoHits[0].index!];
+        if (exo) {
+          selectedExo = exo;
+          selectedStar.set(null);
+          selected = null;
+          selectedDSO = null;
           return;
         }
       }
@@ -135,12 +158,12 @@
 
     raycaster.params.Points!.threshold = 0.08; // ~4.6° on unit sphere — click-friendly
     const hits = raycaster.intersectObject(starRenderer.points, false);
-    if (hits.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; return; }
+    if (hits.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; selectedExo = null; return; }
     // Filter out the Sun (Sol, index 0, mag -26.7) — it is not on the celestial
     // sphere and its extreme magnitude would always win any brightness sort.
     const magAttr = starRenderer.points.geometry.getAttribute('aMag') as THREE.BufferAttribute;
     const valid = hits.filter(h => magAttr.getX(h.index!) > -20);
-    if (valid.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; return; }
+    if (valid.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; selectedExo = null; return; }
     // Pick the star closest to where the user clicked (distanceToRay), using
     // brightness as a tiebreaker so a faint star directly behind a bright one
     // doesn't win purely on position noise.
@@ -163,6 +186,7 @@
     selectedStar.set(sel);
     selected = sel;
     selectedDSO = null;
+    selectedExo = null;
   }
 
   function applyRot(m: THREE.Matrix3, x: number, y: number, z: number): [number, number, number] {
@@ -237,6 +261,11 @@
     if (deepSkyRenderer) deepSkyRenderer.setVisible(showDSO);
   }
 
+  function toggleExo() {
+    showExo = !showExo;
+    if (exoRenderer) exoRenderer.setVisible(showExo);
+  }
+
   function changeMagLimit() {
     starRenderer.setMagLimit(magLimit);
   }
@@ -256,11 +285,12 @@
       const _t0 = performance.now();
       const catResult = await Promise.all([
         loadStarCatalog(), loadNamedStars(), loadConstellationLines(), loadConstellationNames(),
-        loadMessierCatalog()
+        loadMessierCatalog(), loadExoplanetCatalog()
       ]);
       console.log('STELLARIA: Promise.all resolved', catResult[0].length, 'stars');
       [stars, namedStars, , conNames] = catResult;
       const messierData = catResult[4];
+      const exoData = catResult[5];
       loadMsg = `Loaded ${stars.length} stars, ${namedStars.length} named, ${conNames.length} constellations`;
       await new Promise(r => setTimeout(r, 100));
       const consLines = await loadConstellationLines();
@@ -303,6 +333,13 @@
         scene.add(deepSkyRenderer.points);
       }
 
+      // Notable exoplanets — diamond glyphs, type-colored, HZ ring for habitable
+      if (exoData && exoData.length > 0) {
+        exoRenderer = new ExoplanetRenderer(exoData);
+        exoRenderer.setVisible(showExo);
+        scene.add(exoRenderer.points);
+      }
+
       controls = new SkyControls(camera, canvas);
       controls.onMove = () => { azLabel = controls.azimuth; altLabel = controls.altitude; fovLabel = controls.fov; };
       canvas.addEventListener('click', onClick);
@@ -326,6 +363,7 @@
     milkyWayRenderer?.dispose();
     planeOverlay?.dispose();
     deepSkyRenderer?.dispose();
+    exoRenderer?.dispose();
     renderer?.dispose();
   });
 
@@ -385,6 +423,7 @@
   <button class:active={showEcliptic} on:click={toggleEcliptic}>Ecliptic</button>
   <button class:active={showGalactic} on:click={toggleGalactic}>Galactic</button>
   <button class:active={showDSO} on:click={toggleDSO}>Messier</button>
+  <button class:active={showExo} on:click={toggleExo}>Exoplanets</button>
   <button on:click={resetTime}>Now</button>
   <button on:click={() => stepTime(-3600)}>−1h</button>
   <button on:click={() => stepTime(3600)}>+1h</button>
@@ -432,6 +471,31 @@
       <div><span>Dec</span><b>{degToDms(selectedDSO.dec)}</b></div>
     </div>
     <p class="ip-hint">Messier object · Tap empty sky to deselect</p>
+  </div>
+{/if}
+
+{#if selectedExo}
+  <div class="info-panel">
+    <div class="ip-head">
+      <span class="ip-name">{selectedExo.name}</span>
+      <button class="ip-close" on:click={() => { selectedExo = null; }}>×</button>
+    </div>
+    <div class="ip-rows">
+      <div><span>Host star</span><b>{selectedExo.host}</b></div>
+      <div><span>Type</span><b>{selectedExo.type}{selectedExo.habitable ? ' · habitable' : ''}</b></div>
+      <div><span>Discovery</span><b>{selectedExo.year}</b></div>
+      <div><span>Orbital period</span><b>{selectedExo.period < 365
+        ? `${selectedExo.period.toFixed(2)} days`
+        : `${(selectedExo.period / 365.25).toFixed(2)} years`}</b></div>
+      <div><span>Mass</span><b>{selectedExo.mass >= 1
+        ? `${selectedExo.mass.toFixed(2)} M⊕`
+        : `${selectedExo.mass.toFixed(3)} M⊕`}</b></div>
+      <div><span>Radius</span><b>{selectedExo.radius.toFixed(2)} R⊕</b></div>
+      <div><span>Host magnitude</span><b>{selectedExo.hostMag.toFixed(2)}</b></div>
+      <div><span>RA</span><b>{degToHms(selectedExo.ra)}</b></div>
+      <div><span>Dec</span><b>{degToDms(selectedExo.dec)}</b></div>
+    </div>
+    <p class="ip-hint">Exoplanet · {selectedExo.habitable ? '◈ In optimistic habitable zone' : 'Tap empty sky to deselect'}</p>
   </div>
 {/if}
 
