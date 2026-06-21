@@ -4,6 +4,7 @@
   import { StarRenderer } from '$lib/renderer/StarRenderer';
   import { ConstellationRenderer } from '$lib/renderer/ConstellationRenderer';
   import { MilkyWayRenderer } from '$lib/renderer/MilkyWayRenderer';
+  import { PlaneOverlayRenderer } from '$lib/renderer/PlaneOverlayRenderer';
   import { SkyControls } from '$lib/engine/SkyControls';
   import {
     loadStarCatalog, loadNamedStars, loadConstellationLines,
@@ -22,6 +23,7 @@
   let starRenderer: StarRenderer;
   let constellationRenderer: ConstellationRenderer;
   let milkyWayRenderer: MilkyWayRenderer;
+  let planeOverlay: PlaneOverlayRenderer;
   let raycaster = new THREE.Raycaster();
 
   let stars: Star[] = [];
@@ -40,6 +42,8 @@
   let dateMs = Date.now();
   let showCons = true;
   let showMilkyWay = true;
+  let showEcliptic = true;
+  let showGalactic = false;
   let showNames = false;
   let magLimit = 6.0;
   let fovLabel = 75;
@@ -58,6 +62,7 @@
     starRenderer.setRotation(rotationMat);
     constellationRenderer.setRotation(rotationMat);
     if (milkyWayRenderer) milkyWayRenderer.setRotation(rotationMat);
+    if (planeOverlay) planeOverlay.setRotation(rotationMat);
     lastUpdateMs = dateMs;
     lstLabel = degToHms(lstDegrees(new Date(dateMs), lon));
   }
@@ -195,6 +200,16 @@
     if (milkyWayRenderer) milkyWayRenderer.setVisible(showMilkyWay);
   }
 
+  function toggleEcliptic() {
+    showEcliptic = !showEcliptic;
+    if (planeOverlay) planeOverlay.setEclipticVisible(showEcliptic);
+  }
+
+  function toggleGalactic() {
+    showGalactic = !showGalactic;
+    if (planeOverlay) planeOverlay.setGalacticVisible(showGalactic);
+  }
+
   function changeMagLimit() {
     starRenderer.setMagLimit(magLimit);
   }
@@ -246,6 +261,12 @@
       milkyWayRenderer.setVisible(showMilkyWay);
       scene.add(milkyWayRenderer.points);
 
+      // Ecliptic + galactic plane great-circle overlays
+      planeOverlay = new PlaneOverlayRenderer();
+      planeOverlay.setEclipticVisible(showEcliptic);
+      planeOverlay.setGalacticVisible(showGalactic);
+      scene.add(planeOverlay.group);
+
       controls = new SkyControls(camera, canvas);
       controls.onMove = () => { azLabel = controls.azimuth; altLabel = controls.altitude; fovLabel = controls.fov; };
       canvas.addEventListener('click', onClick);
@@ -267,6 +288,7 @@
     starRenderer?.dispose();
     constellationRenderer?.dispose();
     milkyWayRenderer?.dispose();
+    planeOverlay?.dispose();
     renderer?.dispose();
   });
 
@@ -323,6 +345,8 @@
 <div class="controls" class:hidden={loadMsg}>
   <button class:active={showCons} on:click={toggleCons}>Constellations</button>
   <button class:active={showMilkyWay} on:click={toggleMilkyWay}>Milky Way</button>
+  <button class:active={showEcliptic} on:click={toggleEcliptic}>Ecliptic</button>
+  <button class:active={showGalactic} on:click={toggleGalactic}>Galactic</button>
   <button on:click={resetTime}>Now</button>
   <button on:click={() => stepTime(-3600)}>−1h</button>
   <button on:click={() => stepTime(3600)}>+1h</button>

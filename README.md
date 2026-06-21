@@ -97,7 +97,7 @@ Point size scales with apparent magnitude; stars below the user-set magnitude li
 - [ ] Precession correction (J2000 → date-of-epoch)
 - [ ] Deep-sky objects (Messier, NGC)
 - [x] Milky Way band rendering (procedural, 40k GPU point sprites)
-- [ ] Ecliptic and galactic plane overlays
+- [x] Ecliptic and galactic plane overlays (great-circle LineLoops)
 - [ ] Exoplanet marker integration
 - [ ] Mobile touch gestures (pinch-zoom already supported)
 
