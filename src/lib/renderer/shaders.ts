@@ -32,17 +32,22 @@ vec3 bvToRgb(float bv) {
 }
 
 void main() {
+  // Transform equatorial (J2000) -> horizontal frame
+  vec3 horiz = uRotation * position;
+  vec4 mvPosition = modelViewMatrix * vec4(horiz * uRadius, 1.0);
+
+  // Cull stars behind camera or below magnitude limit
   vAlpha = 1.0;
-  vColor = vec3(1.0, 0.8, 0.3);
-  // Manual: camera at origin looking toward (-0.707, 0.707, 0), up=(0,1,0)
-  // viewMatrix rows: X=(0,0,-1) Y=(0.707,0.707,0) Z=(0.707,-0.707,0)
-  vec3 pos = position * 1000.0;
-  float cx = -pos.z;
-  float cy = 0.7071 * (pos.x + pos.y);
-  float cz = 0.7071 * (pos.x - pos.y);
-  if (cz >= 0.0) { vAlpha = 0.0; }
-  gl_PointSize = 6.0;
-  gl_Position = projectionMatrix * vec4(cx, cy, cz, 1.0);
+  if (mvPosition.z > 0.0) vAlpha = 0.0;
+  if (aMag > uMagLimit) vAlpha = 0.0;
+
+  // Stellar color from B-V index
+  vColor = bvToRgb(aCi);
+
+  // Point size: brighter stars = bigger
+  float size = max(1.0, (7.0 - aMag) * 1.5 * uDpr);
+  gl_PointSize = size;
+  gl_Position = projectionMatrix * mvPosition;
 }
 `;
 

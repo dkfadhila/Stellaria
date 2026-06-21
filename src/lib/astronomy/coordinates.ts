@@ -63,8 +63,8 @@ export function rotationMatrix(date: Date, latitudeDeg: number, longitudeDegDeg:
   const m21 = 0;
   const m22 = cosLst;
 
-  // Column-major (Three.js Matrix3 elements order)
-  return [m00, m10, m20, m01, m11, m21, m02, m12, m22];
+  // Row-major for Three.js Matrix3.set(n11,n12,n13, n21,n22,n23, n31,n32,n33)
+  return [m00, m01, m02, m10, m11, m12, m20, m21, m22];
 }
 
 /**
