@@ -49,6 +49,13 @@ export async function loadConstellationNames(): Promise<string[]> {
   return res.json();
 }
 
+/** Load Messier deep-sky catalog (109 objects, compact array format). */
+export async function loadMessierCatalog(): Promise<[number, number, number, number, string, string, string][]> {
+  const res = await fetch('/catalog/messier.json');
+  if (!res.ok) return [];
+  return res.json();
+}
+
 /** Convert RA (deg) and Dec (deg) to a 3D unit vector in J2000 equatorial frame. */
 export function radecToVector(raDeg: number, decDeg: number, radius = 1): [number, number, number] {
   const ra = raDeg * Math.PI / 180;

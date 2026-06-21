@@ -95,7 +95,7 @@ Point size scales with apparent magnitude; stars below the user-set magnitude li
 ## Roadmap
 
 - [ ] Precession correction (J2000 → date-of-epoch)
-- [ ] Deep-sky objects (Messier, NGC)
+- [x] Deep-sky objects (Messier, NGC) — 109 Messier objects with type-colored markers
 - [x] Milky Way band rendering (procedural, 40k GPU point sprites)
 - [x] Ecliptic and galactic plane overlays (great-circle LineLoops)
 - [ ] Exoplanet marker integration

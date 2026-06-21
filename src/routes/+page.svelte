@@ -5,10 +5,11 @@
   import { ConstellationRenderer } from '$lib/renderer/ConstellationRenderer';
   import { MilkyWayRenderer } from '$lib/renderer/MilkyWayRenderer';
   import { PlaneOverlayRenderer } from '$lib/renderer/PlaneOverlayRenderer';
+  import { DeepSkyRenderer, type DeepSkyObject } from '$lib/renderer/DeepSkyRenderer';
   import { SkyControls } from '$lib/engine/SkyControls';
   import {
     loadStarCatalog, loadNamedStars, loadConstellationLines,
-    loadConstellationNames, radecToVector, SPHERE_RADIUS
+    loadConstellationNames, loadMessierCatalog, radecToVector, SPHERE_RADIUS
   } from '$lib/catalog/CatalogLoader';
   import { rotationMatrix, lstDegrees, degToHms, degToDms, horizontalToAltAz } from '$lib/astronomy/coordinates';
   import { SPECTRAL_NAMES } from '$lib/catalog/types';
@@ -24,6 +25,7 @@
   let constellationRenderer: ConstellationRenderer;
   let milkyWayRenderer: MilkyWayRenderer;
   let planeOverlay: PlaneOverlayRenderer;
+  let deepSkyRenderer: DeepSkyRenderer | null = null;
   let raycaster = new THREE.Raycaster();
 
   let stars: Star[] = [];
@@ -44,6 +46,8 @@
   let showMilkyWay = true;
   let showEcliptic = true;
   let showGalactic = false;
+  let showDSO = true;
+  let selectedDSO: DeepSkyObject | null = null;
   let showNames = false;
   let magLimit = 6.0;
   let fovLabel = 75;
@@ -63,6 +67,7 @@
     constellationRenderer.setRotation(rotationMat);
     if (milkyWayRenderer) milkyWayRenderer.setRotation(rotationMat);
     if (planeOverlay) planeOverlay.setRotation(rotationMat);
+    if (deepSkyRenderer) deepSkyRenderer.setRotation(rotationMat);
     lastUpdateMs = dateMs;
     lstLabel = degToHms(lstDegrees(new Date(dateMs), lon));
   }
@@ -112,14 +117,30 @@
     const Rinv = new THREE.Matrix3().copy(R).invert();
     raycaster.ray.origin.applyMatrix3(Rinv);
     raycaster.ray.direction.applyMatrix3(Rinv).normalize();
+
+    // Try DSO pick first — Messier markers are bigger targets
+    if (deepSkyRenderer && showDSO) {
+      raycaster.params.Points!.threshold = 0.06;
+      const dsoHits = raycaster.intersectObject(deepSkyRenderer.points, false);
+      if (dsoHits.length > 0) {
+        const dso = deepSkyRenderer.objects[dsoHits[0].index!];
+        if (dso) {
+          selectedDSO = dso;
+          selectedStar.set(null);
+          selected = null;
+          return;
+        }
+      }
+    }
+
     raycaster.params.Points!.threshold = 0.08; // ~4.6° on unit sphere — click-friendly
     const hits = raycaster.intersectObject(starRenderer.points, false);
-    if (hits.length === 0) { selectedStar.set(null); selected = null; return; }
+    if (hits.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; return; }
     // Filter out the Sun (Sol, index 0, mag -26.7) — it is not on the celestial
     // sphere and its extreme magnitude would always win any brightness sort.
     const magAttr = starRenderer.points.geometry.getAttribute('aMag') as THREE.BufferAttribute;
     const valid = hits.filter(h => magAttr.getX(h.index!) > -20);
-    if (valid.length === 0) { selectedStar.set(null); selected = null; return; }
+    if (valid.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; return; }
     // Pick the star closest to where the user clicked (distanceToRay), using
     // brightness as a tiebreaker so a faint star directly behind a bright one
     // doesn't win purely on position noise.
@@ -141,6 +162,7 @@
     };
     selectedStar.set(sel);
     selected = sel;
+    selectedDSO = null;
   }
 
   function applyRot(m: THREE.Matrix3, x: number, y: number, z: number): [number, number, number] {
@@ -210,6 +232,11 @@
     if (planeOverlay) planeOverlay.setGalacticVisible(showGalactic);
   }
 
+  function toggleDSO() {
+    showDSO = !showDSO;
+    if (deepSkyRenderer) deepSkyRenderer.setVisible(showDSO);
+  }
+
   function changeMagLimit() {
     starRenderer.setMagLimit(magLimit);
   }
@@ -228,10 +255,12 @@
       console.log('STELLARIA: onMount started, about to fetch');
       const _t0 = performance.now();
       const catResult = await Promise.all([
-        loadStarCatalog(), loadNamedStars(), loadConstellationLines(), loadConstellationNames()
+        loadStarCatalog(), loadNamedStars(), loadConstellationLines(), loadConstellationNames(),
+        loadMessierCatalog()
       ]);
       console.log('STELLARIA: Promise.all resolved', catResult[0].length, 'stars');
       [stars, namedStars, , conNames] = catResult;
+      const messierData = catResult[4];
       loadMsg = `Loaded ${stars.length} stars, ${namedStars.length} named, ${conNames.length} constellations`;
       await new Promise(r => setTimeout(r, 100));
       const consLines = await loadConstellationLines();
@@ -267,6 +296,13 @@
       planeOverlay.setGalacticVisible(showGalactic);
       scene.add(planeOverlay.group);
 
+      // Messier deep-sky objects
+      if (messierData && messierData.length > 0) {
+        deepSkyRenderer = new DeepSkyRenderer(messierData);
+        deepSkyRenderer.setVisible(showDSO);
+        scene.add(deepSkyRenderer.points);
+      }
+
       controls = new SkyControls(camera, canvas);
       controls.onMove = () => { azLabel = controls.azimuth; altLabel = controls.altitude; fovLabel = controls.fov; };
       canvas.addEventListener('click', onClick);
@@ -289,6 +325,7 @@
     constellationRenderer?.dispose();
     milkyWayRenderer?.dispose();
     planeOverlay?.dispose();
+    deepSkyRenderer?.dispose();
     renderer?.dispose();
   });
 
@@ -347,6 +384,7 @@
   <button class:active={showMilkyWay} on:click={toggleMilkyWay}>Milky Way</button>
   <button class:active={showEcliptic} on:click={toggleEcliptic}>Ecliptic</button>
   <button class:active={showGalactic} on:click={toggleGalactic}>Galactic</button>
+  <button class:active={showDSO} on:click={toggleDSO}>Messier</button>
   <button on:click={resetTime}>Now</button>
   <button on:click={() => stepTime(-3600)}>−1h</button>
   <button on:click={() => stepTime(3600)}>+1h</button>
@@ -377,6 +415,23 @@
       <div><span>HIP</span><b>{selected.hip || '—'}</b></div>
     </div>
     <p class="ip-hint">Tap empty sky to deselect</p>
+  </div>
+{/if}
+
+{#if selectedDSO}
+  <div class="info-panel">
+    <div class="ip-head">
+      <span class="ip-name">M{selectedDSO.m} — {selectedDSO.name}</span>
+      <button class="ip-close" on:click={() => { selectedDSO = null; }}>×</button>
+    </div>
+    <div class="ip-rows">
+      <div><span>Type</span><b>{selectedDSO.type}</b></div>
+      <div><span>Constellation</span><b>{selectedDSO.const}</b></div>
+      <div><span>Magnitude</span><b>{selectedDSO.mag.toFixed(2)}</b></div>
+      <div><span>RA</span><b>{degToHms(selectedDSO.ra)}</b></div>
+      <div><span>Dec</span><b>{degToDms(selectedDSO.dec)}</b></div>
+    </div>
+    <p class="ip-hint">Messier object · Tap empty sky to deselect</p>
   </div>
 {/if}
 
