@@ -99,6 +99,8 @@ Point size scales with apparent magnitude; stars below the user-set magnitude li
 - [x] Milky Way band rendering (procedural, 40k GPU point sprites)
 - [x] Ecliptic and galactic plane overlays (great-circle LineLoops)
 - [x] Exoplanet markers — 40 notable worlds with diamond glyphs, type coloring (rocky/terran/super-Earth/neptune/gas/water), and gold habitable-zone ring for HZ candidates
+- [x] Star name labels — DOM overlay for named stars (≤mag 4.5), projected to screen-space each frame
+- [x] Constellation name labels — IAU constellation names at spherical centroid of member stars
 - [ ] Mobile touch gestures (pinch-zoom already supported)
 
 ## License

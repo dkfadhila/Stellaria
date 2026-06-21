@@ -157,6 +157,29 @@ export function horizontalToAltAz(x: number, y: number, z: number): { az: number
 }
 
 /**
+ * Convert J2000 RA/Dec into compass azimuth + altitude for a given observer
+ * location and date. Applies IAU 1976 precession (via rotationMatrix).
+ *
+ * Convenience wrapper: rotationMatrix * unitVector -> horizontalToAltAz.
+ * Useful for "look at object X" features without going through Three.js.
+ */
+export function raDecToAltAz(
+  raDeg: number, decDeg: number,
+  date: Date, latDeg: number, lonDeg: number
+): { az: number; alt: number } {
+  const m = rotationMatrix(date, latDeg, lonDeg);
+  const ra = raDeg * DEG, dec = decDeg * DEG;
+  const cd = Math.cos(dec);
+  const x = cd * Math.cos(ra);
+  const y = Math.sin(dec);
+  const z = cd * Math.sin(ra);
+  const hx = m[0] * x + m[1] * y + m[2] * z;
+  const hy = m[3] * x + m[4] * y + m[5] * z;
+  const hz = m[6] * x + m[7] * y + m[8] * z;
+  return horizontalToAltAz(hx, hy, hz);
+}
+
+/**
  * Convert compass bearing (az from North, clockwise) and altitude (deg)
  * into a horizontal-frame unit vector (x=south, y=up, z=east).
  */
