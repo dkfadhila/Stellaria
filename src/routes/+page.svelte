@@ -3,6 +3,7 @@
   import * as THREE from 'three';
   import { StarRenderer } from '$lib/renderer/StarRenderer';
   import { ConstellationRenderer } from '$lib/renderer/ConstellationRenderer';
+  import { MilkyWayRenderer } from '$lib/renderer/MilkyWayRenderer';
   import { SkyControls } from '$lib/engine/SkyControls';
   import {
     loadStarCatalog, loadNamedStars, loadConstellationLines,
@@ -20,6 +21,7 @@
   let controls: SkyControls;
   let starRenderer: StarRenderer;
   let constellationRenderer: ConstellationRenderer;
+  let milkyWayRenderer: MilkyWayRenderer;
   let raycaster = new THREE.Raycaster();
 
   let stars: Star[] = [];
@@ -37,6 +39,7 @@
   let lat = 0, lon = 0, locationLabel = 'Detecting...';
   let dateMs = Date.now();
   let showCons = true;
+  let showMilkyWay = true;
   let showNames = false;
   let magLimit = 6.0;
   let fovLabel = 75;
@@ -54,6 +57,7 @@
     rotationMat.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     starRenderer.setRotation(rotationMat);
     constellationRenderer.setRotation(rotationMat);
+    if (milkyWayRenderer) milkyWayRenderer.setRotation(rotationMat);
     lastUpdateMs = dateMs;
     lstLabel = degToHms(lstDegrees(new Date(dateMs), lon));
   }
@@ -186,6 +190,11 @@
     constellationRenderer.setVisible(showCons);
   }
 
+  function toggleMilkyWay() {
+    showMilkyWay = !showMilkyWay;
+    if (milkyWayRenderer) milkyWayRenderer.setVisible(showMilkyWay);
+  }
+
   function changeMagLimit() {
     starRenderer.setMagLimit(magLimit);
   }
@@ -232,6 +241,11 @@
       scene.add(starRenderer.points);
       scene.add(constellationRenderer.lines);
 
+      // Milky Way band — build last (procedural, no catalog fetch needed)
+      milkyWayRenderer = new MilkyWayRenderer(40000);
+      milkyWayRenderer.setVisible(showMilkyWay);
+      scene.add(milkyWayRenderer.points);
+
       controls = new SkyControls(camera, canvas);
       controls.onMove = () => { azLabel = controls.azimuth; altLabel = controls.altitude; fovLabel = controls.fov; };
       canvas.addEventListener('click', onClick);
@@ -252,6 +266,7 @@
     controls?.dispose();
     starRenderer?.dispose();
     constellationRenderer?.dispose();
+    milkyWayRenderer?.dispose();
     renderer?.dispose();
   });
 
@@ -307,6 +322,7 @@
 
 <div class="controls" class:hidden={loadMsg}>
   <button class:active={showCons} on:click={toggleCons}>Constellations</button>
+  <button class:active={showMilkyWay} on:click={toggleMilkyWay}>Milky Way</button>
   <button on:click={resetTime}>Now</button>
   <button on:click={() => stepTime(-3600)}>−1h</button>
   <button on:click={() => stepTime(3600)}>+1h</button>
