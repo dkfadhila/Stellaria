@@ -92,16 +92,34 @@
     const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
-    raycaster.params.Points!.threshold = 8;
+    // The shader rotates `position` (equatorial J2000) by uRotation into the
+    // horizontal frame at render time, so what the user sees is rotated. The
+    // geometry attribute itself stays equatorial, so raycaster.intersectObject
+    // would test the ray against equatorial positions and always hit the same
+    // star whose equatorial coord happens to lie near the default camera ray.
+    // Fix: inverse-rotate the ray from camera/horizontal frame back into the
+    // equatorial frame so the pick matches what the user actually clicked.
+    const R = (starRenderer.material as THREE.ShaderMaterial).uniforms.uRotation.value as THREE.Matrix3;
+    const Rinv = new THREE.Matrix3().copy(R).invert();
+    raycaster.ray.origin.applyMatrix3(Rinv);
+    raycaster.ray.direction.applyMatrix3(Rinv).normalize();
+    raycaster.params.Points!.threshold = 0.08; // ~4.6° on unit sphere — click-friendly
     const hits = raycaster.intersectObject(starRenderer.points, false);
     if (hits.length === 0) { selectedStar.set(null); selected = null; return; }
-    // pick the brightest hit
-    hits.sort((a, b) => {
-      const ma = (starRenderer.points.geometry.getAttribute('aMag') as THREE.BufferAttribute).getX(a.index!);
-      const mb = (starRenderer.points.geometry.getAttribute('aMag') as THREE.BufferAttribute).getX(b.index!);
-      return ma - mb;
+    // Filter out the Sun (Sol, index 0, mag -26.7) — it is not on the celestial
+    // sphere and its extreme magnitude would always win any brightness sort.
+    const magAttr = starRenderer.points.geometry.getAttribute('aMag') as THREE.BufferAttribute;
+    const valid = hits.filter(h => magAttr.getX(h.index!) > -20);
+    if (valid.length === 0) { selectedStar.set(null); selected = null; return; }
+    // Pick the star closest to where the user clicked (distanceToRay), using
+    // brightness as a tiebreaker so a faint star directly behind a bright one
+    // doesn't win purely on position noise.
+    valid.sort((a, b) => {
+      const da = (a.distanceToRay ?? 0) - (b.distanceToRay ?? 0);
+      if (Math.abs(da) > 0.001) return da;
+      return magAttr.getX(a.index!) - magAttr.getX(b.index!);
     });
-    const idx = hits[0].index!;
+    const idx = valid[0].index!;
     const s = stars[idx];
     const [cx, cy, cz] = radecToVector(s.ra, s.dec, 1);
     const [hx, hy, hz] = applyRot(rotationMat, cx, cy, cz);
@@ -194,7 +212,10 @@
       await new Promise(r => setTimeout(r, 100));
       const consLines = await loadConstellationLines();
       for (const s of stars) if (s.hip) hipToStar.set(s.hip, s);
-      for (const n of namedStars) nameByHip.set(n.hip, n.name);
+      // Only register names for valid HIP numbers — multiple named-stars entries
+      // share hip=0 (Sol, Castor B, Guniibuu B, ...) and would otherwise collide,
+      // making nameByHip.get(0) return the last-inserted name ("Guniibuu B").
+      for (const n of namedStars) if (n.hip && n.hip > 0) nameByHip.set(n.hip, n.name);
 
       const hipToVec = new Map<number, [number, number, number]>();
       for (const s of stars) if (s.hip) hipToVec.set(s.hip, radecToVector(s.ra, s.dec, 1));
