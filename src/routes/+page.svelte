@@ -17,6 +17,12 @@
   import { SPECTRAL_NAMES } from '$lib/catalog/types';
   import { skyState, selectedStar } from '$lib/stores/sky';
   import type { Star, NamedStar } from '$lib/catalog/types';
+  import { AnomalyRenderer } from '$lib/renderer/AnomalyRenderer';
+  import { detectAnomalies, initAnomalyDetector, getAnomalyById, generateTonightReport } from '$lib/ai/anomalyDetector';
+  import type { AnomalyCandidate } from '$lib/ai/anomalyDetector';
+  import AIChatPanel from '$lib/components/AIChatPanel.svelte';
+  import { fetchObjectInfo, naturalLanguageSearch, type AISearchResult } from '$lib/ai/infoHelper';
+  import type { SkyContext } from '$lib/ai/systemPrompt';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
@@ -53,6 +59,16 @@
   let selectedDSO: DeepSkyObject | null = null;
   let showExo = true;
   let selectedExo: Exoplanet | null = null;
+  let showAnomalies = true;
+  let selectedAnomaly: AnomalyCandidate | null = null;
+  let anomalyRenderer: AnomalyRenderer | null = null;
+  let anomalyData: AnomalyCandidate[] = [];
+  let anomalyCount = 0;
+  let aiChatOpen = false;
+  let aiInfoText = '';
+  let aiInfoLoading = false;
+  let aiSearchResults: AISearchResult[] = [];
+  let aiSearching = false;
   let showNames = false;
   let showConNames = false;
   let showCompass = true;
@@ -99,6 +115,7 @@
     if (planeOverlay) planeOverlay.setRotation(rotationMat);
     if (deepSkyRenderer) deepSkyRenderer.setRotation(rotationMat);
     if (exoRenderer) exoRenderer.setRotation(rotationMat);
+    if (anomalyRenderer) anomalyRenderer.setRotation(rotationMat);
     lastUpdateMs = dateMs;
     const d = new Date(dateMs);
     lstLabel = degToHms(lstDegrees(d, lon));
@@ -143,6 +160,8 @@
       updateLabels();
       lastLabelMs = nowMs;
     }
+    // Update anomaly pulse animation
+    if (anomalyRenderer) anomalyRenderer.setTime(performance.now() / 1000);
     renderer.render(scene, camera);
     rafId = requestAnimationFrame(animate);
   }
@@ -176,6 +195,7 @@
           selectedStar.set(null);
           selected = null;
           selectedExo = null;
+          selectedAnomaly = null;
           return;
         }
       }
@@ -192,12 +212,30 @@
           selectedStar.set(null);
           selected = null;
           selectedDSO = null;
+          selectedAnomaly = null;
           return;
         }
       }
     }
 
-    raycaster.params.Points!.threshold = 0.08; // ~4.6° on unit sphere — click-friendly
+    // Anomaly markers — larger pick radius
+      if (anomalyRenderer && showAnomalies) {
+      raycaster.params.Points!.threshold = 0.08;
+      const anomalyHits = raycaster.intersectObject(anomalyRenderer.points, false);
+      if (anomalyHits.length > 0) {
+      const anomaly = anomalyRenderer.objects[anomalyHits[0].index!];
+      if (anomaly) {
+        selectedAnomaly = anomaly;
+        selectedStar.set(null);
+        selected = null;
+        selectedDSO = null;
+        selectedExo = null;
+        return;
+      }
+      }
+      }
+
+      raycaster.params.Points!.threshold = 0.08; // ~4.6° on unit sphere — click-friendly
     const hits = raycaster.intersectObject(starRenderer.points, false);
     if (hits.length === 0) { selectedStar.set(null); selected = null; selectedDSO = null; selectedExo = null; return; }
     // Filter out the Sun (Sol, index 0, mag -26.7) — it is not on the celestial
@@ -228,6 +266,7 @@
     selected = sel;
     selectedDSO = null;
     selectedExo = null;
+    selectedAnomaly = null;
   }
 
   function applyRot(m: THREE.Matrix3, x: number, y: number, z: number): [number, number, number] {
@@ -287,6 +326,38 @@
       }
     }
     searchResults = out.slice(0, 12);
+
+    // Natural language fallback: if no string-match results, try AI search
+    if (out.length === 0 && q.length > 3) {
+      aiSearching = true;
+      naturalLanguageSearch(q, { latitude: lat, longitude: lon, dateMs }).then(results => {
+        aiSearchResults = results;
+        aiSearching = false;
+      }).catch(() => { aiSearching = false; });
+    } else {
+      aiSearchResults = [];
+    }
+  }
+
+  async function loadAIInfo(type: 'star' | 'messier' | 'exoplanet' | 'anomaly', data: Record<string, any>) {
+    aiInfoLoading = true;
+    aiInfoText = '';
+    try {
+      const result = await fetchObjectInfo(type, data, { latitude: lat, longitude: lon, dateMs });
+      aiInfoText = result.text;
+    } catch (err: any) {
+      aiInfoText = 'Error: ' + err.message;
+    } finally {
+      aiInfoLoading = false;
+    }
+  }
+
+  function pickAISearch(r: AISearchResult) {
+    lookAtRaDec(r.ra, r.dec, r.name);
+    searchOpen = false;
+    searchQuery = '';
+    searchResults = [];
+    aiSearchResults = [];
   }
 
   function pickSearch(r: { name: string; ra: number; dec: number; kind: string }) {
@@ -449,22 +520,84 @@
     if (!showConNames) conLabels = [];
   }
 
+  function toggleAnomalies() {
+    showAnomalies = !showAnomalies;
+    if (anomalyRenderer) anomalyRenderer.setVisible(showAnomalies);
+    if (!showAnomalies) selectedAnomaly = null;
+  }
+
+  // AI Chat Panel event handlers
+  function onAILookAt(e: CustomEvent) {
+    lookAtRaDec(e.detail.ra, e.detail.dec, e.detail.name);
+  }
+
+  function onAISearch(e: CustomEvent) {
+    searchQuery = e.detail.query;
+    runSearch();
+    searchOpen = true;
+  }
+
+  function onAIToggleLayer(e: CustomEvent) {
+    const layer = e.detail.layer;
+    switch (layer) {
+      case 'constellations': toggleCons(); break;
+      case 'milkyWay': toggleMilkyWay(); break;
+      case 'ecliptic': toggleEcliptic(); break;
+      case 'galactic': toggleGalactic(); break;
+      case 'messier': toggleDSO(); break;
+      case 'exoplanets': toggleExo(); break;
+      case 'starNames': toggleNames(); break;
+      case 'conNames': toggleConNames(); break;
+    }
+  }
+
+  // Build sky context for AI
+  $: skyContext = {
+    latitude: lat,
+    longitude: lon,
+    dateMs,
+    magLimit,
+    visibleStarCount,
+    selectedObject: selected
+      ? { ...selected, type: 'star' as const }
+      : selectedDSO
+        ? { ...selectedDSO, type: 'messier' as const }
+        : selectedExo
+          ? { ...selectedExo, type: 'exoplanet' as const }
+          : selectedAnomaly
+            ? { name: selectedAnomaly.name, ra: selectedAnomaly.ra, dec: selectedAnomaly.dec, type: 'anomaly' as const }
+            : null,
+    viewAz: azLabel,
+    viewAlt: altLabel,
+    viewFov: fovLabel,
+    layers: {
+      constellations: showCons,
+      milkyWay: showMilkyWay,
+      ecliptic: showEcliptic,
+      galactic: showGalactic,
+      messier: showDSO,
+      exoplanets: showExo,
+      starNames: showNames,
+      conNames: showConNames
+    }
+  } satisfies SkyContext;
+
   /** Project a J2000 equatorial unit vector (x,y,z) into screen-space pixel coords.
    *  Returns null if the point is behind the camera or outside the viewport. */
   function projectToScreen(eqX: number, eqY: number, eqZ: number): { x: number; y: number } | null {
-    // Apply equatorial → horizontal frame rotation (same as vertex shader).
+    // Apply equatorial -> horizontal frame rotation (same as vertex shader).
     _v3.set(eqX, eqY, eqZ).applyMatrix3(rotationMat);
     // Place on the celestial sphere at SPHERE_RADIUS.
     _v3.multiplyScalar(SPHERE_RADIUS);
-    // Transform into camera space. Camera looks down −z, so points in front
-    // have z < 0; points behind the camera have z > 0 — filter those out
+    // Transform into camera space. Camera looks down -z, so points in front
+    // have z < 0; points behind the camera have z > 0 -- filter those out
     // *before* the projection matrix divides by w (which flips signs and
     // makes the NDC z test unreliable for behind-camera points).
     _v3.applyMatrix4(camera.matrixWorldInverse);
     if (_v3.z > 0) return null;
-    // Apply projection matrix → NDC.
+    // Apply projection matrix -> NDC.
     _proj.copy(_v3).applyMatrix4(camera.projectionMatrix);
-    // NDC → screen pixel
+    // NDC -> screen pixel
     const sx = (_proj.x * 0.5 + 0.5) * window.innerWidth;
     const sy = (-_proj.y * 0.5 + 0.5) * window.innerHeight;
     if (sx < -40 || sx > window.innerWidth + 40 || sy < -40 || sy > window.innerHeight + 40) return null;
@@ -504,6 +637,17 @@
   function changeMagLimit() {
     starRenderer.setMagLimit(magLimit);
     estimateVisibleStars();
+  }
+
+  function formatAIContent(text: string): string {
+    if (!text) return '';
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/`(.*?)`/g, '<code>$1</code>')
+      .replace(/^- (.*)/gm, '<li>$1</li>')
+      .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+      .replace(/\n/g, '<br>');
   }
 
   onMount(async () => {
@@ -598,6 +742,15 @@
         scene.add(exoRenderer.points);
       }
 
+      // Gravitational anomaly detection + rendering
+      initAnomalyDetector(conNames);
+      anomalyData = detectAnomalies(stars, namedStars);
+      anomalyCount = anomalyData.length;
+      anomalyRenderer = new AnomalyRenderer(anomalyData);
+      anomalyRenderer.setVisible(showAnomalies);
+      scene.add(anomalyRenderer.points);
+      scene.add(anomalyRenderer.rings);
+
       controls = new SkyControls(camera, canvas);
       controls.onMove = () => { azLabel = controls.azimuth; altLabel = controls.altitude; fovLabel = controls.fov; };
       canvas.addEventListener('click', onClick);
@@ -633,6 +786,7 @@
     planeOverlay?.dispose();
     deepSkyRenderer?.dispose();
     exoRenderer?.dispose();
+    anomalyRenderer?.dispose();
     renderer?.dispose();
   });
 
@@ -715,6 +869,10 @@
       <span class="k">Constellations</span>
       <span class="v">{constellationCount}</span>
     </div>
+    <div class="hud-block anomaly-stat">
+      <span class="k">Anomalies</span>
+      <span class="v">{anomalyCount}</span>
+    </div>
     <div class="hud-block">
       <span class="k">Local time</span>
       <span class="v">{new Date(dateMs).toLocaleTimeString([], {hour12:false})}</span>
@@ -752,6 +910,22 @@
       {/each}
     </div>
   {/if}
+  {#if searchOpen && aiSearching}
+    <div class="search-results">
+      <div class="search-ai-loading">✦ Searching with AI...</div>
+    </div>
+  {/if}
+  {#if searchOpen && aiSearchResults.length > 0}
+    <div class="search-results">
+      <div class="search-ai-header">✦ AI Results</div>
+      {#each aiSearchResults as r}
+        <button class="search-item ai-search-item" on:mousedown|preventDefault={() => pickAISearch(r)}>
+          <span class="si-name">{r.name}</span>
+          <span class="si-kind">{r.kind}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <div class="controls" class:hidden={loadMsg}>
@@ -765,6 +939,7 @@
     <button class:active={showNames} on:click={toggleNames}>Star Names</button>
     <button class:active={showConNames} on:click={toggleConNames}>Con Names</button>
     <button class:active={showCompass} on:click={() => showCompass = !showCompass}>Compass</button>
+    <button class:active={showAnomalies} on:click={toggleAnomalies} class="anomaly-btn">✦ Anomalies</button>
   </div>
   <div class="ctrl-group">
     <button on:click={resetTime}>Now</button>
@@ -829,6 +1004,12 @@
         <button class="ip-stop" on:click={stopTracking}>Stop tracking</button>
       {/if}
     </div>
+    <button class="ai-info-btn" on:click={() => loadAIInfo('star', selected)}>
+      {aiInfoLoading ? '⏳ Loading...' : '✦ Ask AI about this star'}
+    </button>
+    {#if aiInfoText}
+      <div class="ai-info-text">{@html formatAIContent(aiInfoText)}</div>
+    {/if}
     <p class="ip-hint">Tap empty sky to deselect</p>
   </div>
 {/if}
@@ -854,6 +1035,12 @@
         <button class="ip-stop" on:click={stopTracking}>Stop tracking</button>
       {/if}
     </div>
+    <button class="ai-info-btn" on:click={() => loadAIInfo('messier', { m: selectedDSO.m, name: selectedDSO.name, type: selectedDSO.type, const: selectedDSO.const, mag: selectedDSO.mag })}>
+      {aiInfoLoading ? '⏳ Loading...' : '✦ Ask AI about this object'}
+    </button>
+    {#if aiInfoText}
+      <div class="ai-info-text">{@html formatAIContent(aiInfoText)}</div>
+    {/if}
     <p class="ip-hint">Messier object · Tap empty sky to deselect</p>
   </div>
 {/if}
@@ -887,9 +1074,63 @@
         <button class="ip-stop" on:click={stopTracking}>Stop tracking</button>
       {/if}
     </div>
+    <button class="ai-info-btn" on:click={() => loadAIInfo('exoplanet', { name: selectedExo.name, host: selectedExo.host, year: selectedExo.year, period: selectedExo.period, mass: selectedExo.mass, radius: selectedExo.radius, habitable: selectedExo.habitable })}>
+      {aiInfoLoading ? '⏳ Loading...' : '✦ Ask AI about this exoplanet'}
+    </button>
+    {#if aiInfoText}
+      <div class="ai-info-text">{@html formatAIContent(aiInfoText)}</div>
+    {/if}
     <p class="ip-hint">Exoplanet · {selectedExo.habitable ? '◈ In optimistic habitable zone' : 'Tap empty sky to deselect'}</p>
   </div>
 {/if}
+
+{#if selectedAnomaly}
+  <div class="info-panel anomaly-panel">
+    <div class="ip-head">
+      <span class="ip-name anomaly-name">✦ {selectedAnomaly.name}</span>
+      <button class="ip-close" on:click={() => { selectedAnomaly = null; }}>×</button>
+    </div>
+    <div class="ip-rows">
+      <div><span>Object Type</span><b>{selectedAnomaly.objectType.replace(/_/g, ' ')}</b></div>
+      <div><span>Detection Method</span><b>{selectedAnomaly.method.replace(/_/g, ' ')}</b></div>
+      <div><span>Confidence</span><b class="anomaly-conf">{(selectedAnomaly.confidence * 100).toFixed(0)}%</b></div>
+      <div><span>Est. Mass</span><b>{selectedAnomaly.estimatedMass}</b></div>
+      <div><span>RA (J2000)</span><b>{degToHms(selectedAnomaly.ra)}</b></div>
+      <div><span>Dec (J2000)</span><b>{degToDms(selectedAnomaly.dec)}</b></div>
+    </div>
+    <p class="anomaly-desc">{selectedAnomaly.description}</p>
+    {#if selectedAnomaly.evidence.length > 0}
+      <div class="anomaly-evidence">
+        <span class="ae-title">Evidence:</span>
+        <ul>
+          {#each selectedAnomaly.evidence as ev}
+            <li>{ev}</li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+    {#if selectedAnomaly.relatedStars.length > 0}
+      <div class="anomaly-related">
+        <span>Related: {selectedAnomaly.relatedStars.join(', ')}</span>
+      </div>
+    {/if}
+    <div class="ip-actions">
+      <button class="ip-track" on:click={() => { if (selectedAnomaly) lookAtRaDec(selectedAnomaly.ra, selectedAnomaly.dec, selectedAnomaly.name); }}>
+        ◈ Focus
+      </button>
+    </div>
+    <p class="ip-hint">Gravitational Anomaly · Click empty sky to deselect</p>
+  </div>
+{/if}
+
+<!-- AI Chat Panel -->
+<AIChatPanel
+  {skyContext}
+  {anomalyData}
+  on:lookAt={onAILookAt}
+  on:search={onAISearch}
+  on:toggleLayer={onAIToggleLayer}
+/>
 
 <!-- Star + constellation name label overlay — DOM text positioned over canvas -->
 {#if !loadMsg}
@@ -1091,6 +1332,132 @@
     letter-spacing: 2px; text-transform: uppercase; font-weight: 500;
     text-shadow: 0 0 6px rgba(0,0,16,0.95), 0 0 3px rgba(0,0,16,0.95);
     white-space: nowrap; pointer-events: none; opacity: 0.78;
+  }
+
+
+  /* Anomaly panel */
+  .anomaly-panel {
+    border-color: rgba(255, 180, 50, 0.3);
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .anomaly-name {
+    color: #f4b732 !important;
+    font-size: 14px;
+  }
+  .anomaly-conf {
+    color: #f4b732 !important;
+    font-weight: 600;
+  }
+  .anomaly-desc {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+    margin: 10px 0 8px;
+    padding: 8px;
+    background: rgba(255, 180, 50, 0.05);
+    border-left: 2px solid rgba(255, 180, 50, 0.3);
+    border-radius: 0 4px 4px 0;
+  }
+  .anomaly-evidence {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .ae-title {
+    color: #f4b732;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .anomaly-evidence ul {
+    margin: 4px 0;
+    padding-left: 16px;
+    list-style: disc;
+  }
+  .anomaly-evidence li {
+    margin-bottom: 3px;
+    line-height: 1.4;
+  }
+  .anomaly-related {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+  }
+  .anomaly-btn {
+    border-color: rgba(255, 180, 50, 0.3) !important;
+    color: #f4b732 !important;
+  }
+  .anomaly-btn.active {
+    background: rgba(255, 180, 50, 0.15) !important;
+    border-color: #f4b732 !important;
+  }
+  .anomaly-stat .v {
+    color: #f4b732;
+    font-weight: 600;
+  }
+
+  /* AI Info button + description */
+  .ai-info-btn {
+    width: 100%;
+    padding: 6px 10px;
+    margin-top: 8px;
+    font-size: 11px;
+    background: rgba(138, 180, 255, 0.08);
+    border: 1px solid rgba(138, 180, 255, 0.2);
+    border-radius: 5px;
+    color: var(--accent);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .ai-info-btn:hover {
+    background: rgba(138, 180, 255, 0.18);
+    border-color: var(--accent);
+  }
+  .ai-info-text {
+    margin-top: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--fg);
+    background: rgba(138, 180, 255, 0.05);
+    border-left: 2px solid rgba(138, 180, 255, 0.3);
+    border-radius: 0 4px 4px 0;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .ai-info-text :global(strong) { color: #d6e4ff; }
+  .ai-info-text :global(em) { color: var(--muted); }
+  .ai-info-text :global(code) {
+    font-family: var(--mono); font-size: 10px;
+    background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px;
+  }
+  .ai-info-text :global(ul) { margin: 4px 0; padding-left: 16px; }
+  .ai-info-text :global(li) { margin-bottom: 2px; }
+
+  /* AI search results */
+  .search-ai-loading {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--accent);
+    text-align: center;
+  }
+  .search-ai-header {
+    padding: 4px 10px;
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    background: rgba(138, 180, 255, 0.05);
+  }
+  .ai-search-item .si-kind {
+    color: var(--accent);
   }
 
   @media (max-width: 640px) {
