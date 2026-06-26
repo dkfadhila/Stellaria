@@ -1,4 +1,4 @@
-# ✦ Stellaria
+# ✦ Stellaria.
 
 An interactive, GPU-accelerated star atlas and constellation engine that renders the night sky in real time. Built with SvelteKit, Three.js, and custom GLSL shaders.
 
